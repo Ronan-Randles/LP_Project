@@ -1,6 +1,6 @@
 /*--------------------------------------------------------------------------*/
 /*                                                                          */
-/*       parser1                                                            */
+/*       parser2                                                            */
 /*                                                                          */
 /*                                                                          */
 /*       Group Members:          ID numbers                                 */
@@ -8,46 +8,8 @@
 /*       Ronan Randles            19242441                                  */
 /*                                                                          */
 /*--------------------------------------------------------------------------*/
-/*                                                                          */
-/*       parser1 Grammar:                                                   */
-/*                                                                          */
-/*  〈Program〉 :== “PROGRAM” 〈Identifier 〉 “;”
-                    [ 〈Declarations〉 ] { 〈ProcDeclaration〉 } 〈Block 〉 “.”
-
-    〈Declarations〉 :== “VAR” 〈Variable〉 { “,” 〈Variable〉 } “;”
-    〈ProcDeclaration〉 :== “PROCEDURE” 〈Identifier 〉 [ 〈ParameterList〉 ] “;”
-                        [ 〈Declarations〉 ] { 〈ProcDeclaration〉 } 〈Block 〉 “;”
-
-    〈ParameterList〉 :== “(” 〈FormalParameter 〉 { “,” 〈FormalParameter 〉 } “)”
-    〈FormalParameter 〉 :== [ “REF” ] 〈Variable〉
-    〈Block 〉 :== “BEGIN” { 〈Statement〉 “;” } “END”
-    〈Statement〉 :== 〈SimpleStatement〉 | 〈WhileStatement〉 | 〈IfStatement〉 |
-                    〈ReadStatement〉 | 〈WriteStatement〉
-
-    〈SimpleStatement〉 :== 〈VarOrProcName〉 〈RestOfStatement〉
-    〈RestOfStatement〉 :== 〈ProcCallList〉 | 〈Assignment〉 | \eps
-    〈ProcCallList〉 :== “(” 〈ActualParameter 〉 { “,” 〈ActualParameter 〉 } “)”
-    〈Assignment〉 :== “:=” 〈Expression〉
-    〈ActualParameter 〉 :== 〈Variable〉 | 〈Expression〉
-    〈WhileStatement〉 :== “WHILE” 〈BooleanExpression〉 “DO” 〈Block 〉
-    〈IfStatement〉 :== “IF” 〈BooleanExpression〉 “THEN” 〈Block 〉 [ “ELSE” 〈Block 〉 ]
-    〈ReadStatement〉 :== “READ” “(” 〈Variable〉 { “,” 〈Variable〉 } “)”
-    〈WriteStatement〉 :== “WRITE” “(” 〈Expression〉 { “,” 〈Expression〉 } “)”
-    〈Expression〉 :== 〈CompoundTerm〉 { 〈AddOp〉 〈CompoundTerm〉 }
-    〈CompoundTerm〉 :== 〈Term〉 { 〈MultOp〉 〈Term〉 }
-    〈Term〉 :== [ “-” ] 〈SubTerm〉
-    〈SubTerm〉 :== 〈Variable〉 | 〈IntConst〉 | “(” 〈Expression〉 “)”
-    〈BooleanExpression〉 :== 〈Expression〉 〈RelOp〉 〈Expression〉
-    〈AddOp〉 :== “+” | “-”
-    〈MultOp〉 :== “*” | “/”
-    〈RelOp〉 :== “=” | “<=” | “>=” | “<” | “>”
-    〈Variable〉 :== 〈Identifier 〉
-    〈VarOrProcName〉 :== 〈Identifier 〉
-    〈Identifier 〉 :== 〈Alpha〉 { 〈AlphaNum〉 }
-    〈IntConst〉 :== 〈Digit〉 { 〈Digit〉 }
-    〈AlphaNum〉 :== 〈Alpha〉 | 〈Digit〉
-    〈Alpha〉 :== “A” . . . “Z” | “a” . . . “z”
-    〈Digit〉 :== “0” . . . “9”                                              */
+/*      parser2 builds on parse1 with the addition of augmented s-algol     */
+/*      error recovery                                                    */
 /*--------------------------------------------------------------------------*/
 
 #include <stdio.h>
@@ -80,7 +42,17 @@ PRIVATE TOKEN  CurrentToken;       /*  Parser lookahead token.  Updated by  */
 
 PRIVATE int  OpenFiles( int argc, char *argv[] );
 PRIVATE void Accept( int code );
-PRIVATE void ReadToEndOfFile( void );
+PRIVATE void Synchronise(SET *F, SET *FB);
+PRIVATE void SetupSets(void);
+
+PRIVATE SET ProgramFS_aug1;
+PRIVATE SET ProgramFS_aug2;
+PRIVATE SET ProgramFBS_aug;
+PRIVATE SET ProcDeclarationFS_aug1;
+PRIVATE SET ProcDeclarationFS_aug2;
+PRIVATE SET ProcDeclarationFBS_aug;
+PRIVATE SET BlockFS_aug;
+PRIVATE SET BlockFBS_aug;
 
 PRIVATE void ParseProgram(void);
 PRIVATE void ParseDeclarations(void);
@@ -106,9 +78,6 @@ PRIVATE void ParseBooleanExpression(void);
 PRIVATE void ParseAddOp(void);
 PRIVATE void ParseMultOp(void);
 PRIVATE void ParseRelOp(void);
-PRIVATE void ParseVariable(void);
-PRIVATE void ParseIntConst(void);
-PRIVATE void ParseIdentifier(void);
 
 
 /*--------------------------------------------------------------------------*/
@@ -122,12 +91,14 @@ PRIVATE void ParseIdentifier(void);
 PUBLIC int main ( int argc, char *argv[] )
 {
     if ( OpenFiles( argc, argv ) )  {
+
         InitCharProcessor( InputFile, ListFile );
         CurrentToken = GetToken();
+        SetupSets();
         ParseProgram();
         fclose( InputFile );
         fclose( ListFile );
-        printf("Valid\n");
+        printf("Parse Complete\n");
         return  EXIT_SUCCESS;
     }
     else {
@@ -155,13 +126,13 @@ PRIVATE void ParseProgram( void )
     Accept( IDENTIFIER );
     Accept( SEMICOLON );
 
-    if (CurrentToken.code == VAR) {
+    Synchronise(&ProgramFS_aug1, &ProgramFBS_aug);
+    if (CurrentToken.code == VAR)
         ParseDeclarations();
-    }
-
-    while (CurrentToken.code == PROCEDURE)
-    {
+    Synchronise(&ProgramFS_aug2, &ProgramFBS_aug);
+    while (CurrentToken.code == PROCEDURE) {
         ParseProcDeclaration();
+        Synchronise(&ProgramFS_aug2, &ProgramFBS_aug);
     }
 
     ParseBlock();
@@ -207,12 +178,17 @@ PRIVATE void ParseProcDeclaration( void )
         ParseParameterList();
     }
     Accept( SEMICOLON );
+    Synchronise(&ProcDeclarationFS_aug1, &ProcDeclarationFBS_aug);
     if (CurrentToken.code == VAR) {
         ParseDeclarations();
     }
+    Synchronise(&ProcDeclarationFS_aug2, &ProcDeclarationFBS_aug);
     while (CurrentToken.code == PROCEDURE ) {
         ParseProcDeclaration();
+        Synchronise(&ProcDeclarationFS_aug2, &ProcDeclarationFBS_aug);
     }
+
+
     ParseBlock();
     Accept(SEMICOLON);
 }
@@ -265,13 +241,15 @@ PRIVATE void ParseFormalParameter( void )
 PRIVATE void ParseBlock( void )
 {
     Accept( BEGIN );
-
-    while (CurrentToken.code == IDENTIFIER || CurrentToken.code == WHILE ||
+    Synchronise(&BlockFS_aug, &BlockFBS_aug);
+    while ( CurrentToken.code == IDENTIFIER || CurrentToken.code == WHILE ||
             CurrentToken.code == IF || CurrentToken.code == READ ||
-            CurrentToken.code == WRITE) {
+            CurrentToken.code == WRITE ) {
         ParseStatement();
         Accept(SEMICOLON);
+        Synchronise(&BlockFS_aug, &BlockFBS_aug);
     }
+
     Accept( END );
 }
 
@@ -666,16 +644,50 @@ PRIVATE void ParseRelOp( void )
 
 PRIVATE void Accept( int ExpectedToken )
 {
+    static int recovering = 0;
+    if (recovering) {
+        while(CurrentToken.code != ExpectedToken && CurrentToken.code != ENDOFINPUT){
+            CurrentToken = GetToken();
+            printf("CurrentTokenCode: %i\n", CurrentToken.code);
+        }
+        recovering = 0;
+    }
     if ( CurrentToken.code != ExpectedToken )  {
         SyntaxError( ExpectedToken, CurrentToken );
-        ReadToEndOfFile();
-        fclose( InputFile );
-        fclose( ListFile );
-        exit( EXIT_FAILURE );
+        recovering = 1;
     }
     else  CurrentToken = GetToken();
 }
 
+PRIVATE void SetupSets(void)
+{
+
+    /* Set for synching ParseProgram */
+    InitSet(&ProgramFS_aug1, 3, VAR, PROCEDURE, BEGIN);
+    InitSet(&ProgramFS_aug2, 2, PROCEDURE, BEGIN);
+    InitSet(&ProgramFBS_aug, 3, ENDOFPROGRAM, ENDOFINPUT, END);
+
+    /* Set for synching ParseProcDeclaration */
+    InitSet(&ProcDeclarationFS_aug1, 3, VAR, PROCEDURE, BEGIN);
+    InitSet(&ProcDeclarationFS_aug2, 2, PROCEDURE, BEGIN);
+    InitSet(&ProcDeclarationFBS_aug, 3, ENDOFPROGRAM, ENDOFINPUT, END);
+
+    /* Set for synching ParseBlock */
+    InitSet(&BlockFS_aug, 6, IDENTIFIER, WHILE, IF, READ, WRITE, END);
+    InitSet(&BlockFBS_aug, 4, ENDOFINPUT, ENDOFPROGRAM, SEMICOLON, ELSE);
+}
+
+PRIVATE void Synchronise(SET *F, SET *FB)
+{
+    SET S;
+
+    S = Union(2, F, FB);
+    if(!InSet(F, CurrentToken.code)) {
+        SyntaxError2(*F, CurrentToken);
+        while(!InSet(&S, CurrentToken.code))
+            CurrentToken = GetToken();
+    }
+}
 
 /*--------------------------------------------------------------------------*/
 /*                                                                          */
@@ -721,37 +733,4 @@ PRIVATE int  OpenFiles( int argc, char *argv[] )
     }
 
     return 1;
-}
-
-
-/*--------------------------------------------------------------------------*/
-/*                                                                          */
-/*  ReadToEndOfFile:  Reads all remaining tokens from the input file.       */
-/*              associated input and listing files.                         */
-/*                                                                          */
-/*    This is used to ensure that the listing file refects the entire       */
-/*    input, even after a syntax error (because of crash & burn parsing,    */
-/*    if a routine like this is not used, the listing file will not be      */
-/*    complete.  Note that this routine also reports in the listing file    */
-/*    exactly where the parsing stopped.  Note that this routine is         */
-/*    superfluous in a parser that performs error-recovery.                 */
-/*                                                                          */
-/*                                                                          */
-/*    Inputs:       None                                                    */
-/*                                                                          */
-/*    Outputs:      None                                                    */
-/*                                                                          */
-/*    Returns:      Nothing                                                 */
-/*                                                                          */
-/*    Side Effects: Reads all remaining tokens from the input.  There won't */
-/*                  be any more available input after this routine returns. */
-/*                                                                          */
-/*--------------------------------------------------------------------------*/
-
-PRIVATE void ReadToEndOfFile( void )
-{
-    if ( CurrentToken.code != ENDOFINPUT )  {
-        Error( "Parsing ends here in this program\n", CurrentToken.pos );
-        while ( CurrentToken.code != ENDOFINPUT )  CurrentToken = GetToken();
-    }
 }

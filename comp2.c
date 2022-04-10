@@ -35,6 +35,7 @@ PRIVATE FILE *ListFile;            /*  For nicely-formatted syntax errors.  */
 PRIVATE FILE *CodeFile;
 PRIVATE int writing = 0;
 PRIVATE int reading = 0;
+PRIVATE int ErrorFlag = 0;
 
 PRIVATE TOKEN  CurrentToken;       /*  Parser lookahead token.  Updated by  */
                                    /*  routine Accept (below).  Must be     */
@@ -51,7 +52,7 @@ PRIVATE int  OpenFiles(int argc, char *argv[]);
 PRIVATE void Accept(int code);
 PRIVATE void Synchronise(SET *F, SET *FB);
 PRIVATE void SetupSets(void);
-PRIVATE SYMBOL *MakeSymbolTableEntry();
+PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype);
 PRIVATE SYMBOL *LookupSymbol();
 
 PRIVATE SET ProgramFS_aug1;
@@ -109,7 +110,12 @@ PUBLIC int main (int argc, char *argv[])
         WriteCodeFile();
         fclose(InputFile);
         fclose(ListFile);
-        return  EXIT_SUCCESS;
+        if (!ErrorFlag) {
+            printf("Valid\n");
+            return EXIT_SUCCESS;
+        } else
+            return EXIT_FAILURE;
+
     }
     else {
         return EXIT_FAILURE;
@@ -133,6 +139,7 @@ PUBLIC int main (int argc, char *argv[])
 PRIVATE void ParseProgram(void)
 {
     Accept(PROGRAM);
+    MakeSymbolTableEntry(STYPE_PROGRAM);
     Accept(IDENTIFIER);
     Accept(SEMICOLON);
 
@@ -191,9 +198,8 @@ PRIVATE void ParseProcDeclaration(void)
     int vcount = 0;
     int backpatch_addr;
     SYMBOL *procedure;
-
     Accept(PROCEDURE);
-    procedure = MakeSymbolTableEntry(STYPE_PROCEDURE, NULL);
+    procedure = MakeSymbolTableEntry(STYPE_PROCEDURE);
     Accept(IDENTIFIER);
     backpatch_addr = CurrentCodeAddress();
     Emit(I_BR,0);
@@ -213,12 +219,13 @@ PRIVATE void ParseProcDeclaration(void)
         Synchronise(&ProcDeclarationFS_aug2, &ProcDeclarationFBS_aug);
     }
 
-    Emit(I_DEC, vcount);
     ParseBlock();
     Accept(SEMICOLON);
+    Emit(I_DEC, vcount);
 
     _Emit(I_RET);
     BackPatch(backpatch_addr, CurrentCodeAddress());
+    DumpSymbols(0); /*Uncomment to dump symbols */
     RemoveSymbols(scope);
     scope--;
 }
@@ -235,6 +242,7 @@ PRIVATE void ParseProcDeclaration(void)
 PRIVATE void ParseParameterList(void)
 {
     Accept(LEFTPARENTHESIS);
+    if (CurrentToken.code != 0)
     ParseFormalParameter();
 
     while (CurrentToken.code == COMMA) {
@@ -255,9 +263,13 @@ PRIVATE void ParseParameterList(void)
 PRIVATE void ParseFormalParameter(void)
 {
     if (CurrentToken.code == REF) {
-        Accept(REF);
+        Accept(REF); /* Consume "REF" term */
+        MakeSymbolTableEntry(STYPE_REFPAR); /* Set following symbol to type REFPAR */
+        Accept(IDENTIFIER);
+    }else {
+        MakeSymbolTableEntry(STYPE_VARIABLE);
+        Accept(IDENTIFIER);
     }
-    Accept(IDENTIFIER);
 }
 
 /*--------------------------------------------------------------------------*/
@@ -326,7 +338,6 @@ PRIVATE void ParseStatement(void)
 PRIVATE void ParseSimpleStatement(void)
 {
     SYMBOL *target;
-
     target = LookupSymbol();
     Accept(IDENTIFIER);
     ParseRestOfStatement(target);
@@ -347,25 +358,30 @@ PRIVATE void ParseRestOfStatement(SYMBOL *target)
         case LEFTPARENTHESIS:
             ParseProcCallList();/*should take target?*/
         case SEMICOLON:
-            if (target != NULL && target->type == STYPE_PROCEDURE)
+            if (target != NULL && target->type == STYPE_PROCEDURE) {
+                _Emit(I_PUSHFP);
+                _Emit(I_BSF);
                 Emit(I_CALL, target->address);
+                _Emit(I_RSF);
+            }
             else {
                 printf("Not a procedure\n");
                 KillCodeGeneration();
             }
             break;
         case ASSIGNMENT:
+        default:
             ParseAssignment();
-            if (target!= NULL && target->type == STYPE_VARIABLE)
+            if (target!= NULL &&
+            (target->type == STYPE_VARIABLE || target->type == STYPE_REFPAR))
+
                 Emit(I_STOREA, target->address);
             else {
-                printf("Undeclared variable\n");
+                printf("Undeclared variable: %s\n", target->s);
                 KillCodeGeneration();
             }
             break;
-        /***Handle epsilon here?*/
-        default:
-            break;
+
     }
 }
 
@@ -384,7 +400,6 @@ PRIVATE void ParseProcCallList(void)
     Accept(LEFTPARENTHESIS);
     if(reading)
         _Emit(I_READ);
-
     ParseActualParameter();
     if(writing)
         _Emit(I_WRITE);
@@ -394,7 +409,7 @@ PRIVATE void ParseProcCallList(void)
         Accept(COMMA);
         if(writing)
             _Emit(I_WRITE);
-        ParseActualParameter();
+    ParseActualParameter();
     }
     Accept(RIGHTPARENTHESIS);
 }
@@ -423,11 +438,14 @@ PRIVATE void ParseAssignment(void)
 
 PRIVATE void ParseActualParameter(void)
 {
-    if (CurrentToken.code == IDENTIFIER)
+    printf("CtS: %s\n", CurrentToken.s);
+    if (CurrentToken.code == IDENTIFIER) {
         Accept(IDENTIFIER);
+    }
     else
         ParseExpression();
 }
+
 
 /*--------------------------------------------------------------------------*/
 /*                                                                          */
@@ -517,7 +535,7 @@ PRIVATE void ParseWriteStatement(void)
         ParseExpression();
     }
     Accept(RIGHTPARENTHESIS);
-    writing = 0;
+
 }
 
 /*--------------------------------------------------------------------------*/
@@ -602,31 +620,8 @@ PRIVATE void ParseSubTerm(void)
 {
     int i, dS;
     SYMBOL *var;
-
     switch (CurrentToken.code)
     {
-        case IDENTIFIER:
-        default:
-            var = LookupSymbol();
-
-            if (var != NULL && var->type == STYPE_VARIABLE) {
-                Emit(I_LOADA, var->address);
-            } else if (var->type == STYPE_LOCALVAR) {
-                dS = scope - var->scope;
-                if (dS == 0)
-                    Emit(I_LOADFP, var->address);
-                else {
-                    _Emit(I_LOADFP);
-                    for (i = 0; i < dS - 1; i++)
-                        _Emit(I_LOADSP);
-                    Emit(I_LOADSP, var->address);
-                }
-            }
-            else {
-                printf("name undeclared or not a variable\n");
-            }
-            Accept(IDENTIFIER);
-            break;
         case INTCONST:
             Emit(I_LOADI, CurrentToken.value);
             Accept(INTCONST);
@@ -635,6 +630,49 @@ PRIVATE void ParseSubTerm(void)
             Accept(LEFTPARENTHESIS);
             ParseExpression();
             Accept(RIGHTPARENTHESIS);
+            break;
+        case IDENTIFIER:
+        default:
+            var = LookupSymbol();
+
+            if (var != NULL){
+                if (var->type == STYPE_VARIABLE) {
+                    if (writing) {
+                        Emit(I_LOADA,var->address);
+                    }
+                    else if (reading) {
+                        Emit(I_STOREA,var->address);
+                    }
+                    else {
+                        Emit(I_LOADA,var->address);
+                    }
+                } else if (var->type == STYPE_LOCALVAR) {
+                    dS = scope - var->scope;
+                    if (dS == 0)
+                        Emit(I_LOADFP, var->address);
+                    else {
+                        _Emit(I_LOADFP);
+                        for (i = 0; i < dS - 1; i++)
+                            _Emit(I_LOADSP);
+                        Emit(I_LOADSP, var->address);
+                    }
+                } else if (var->type == STYPE_REFPAR) {
+                    if (writing) {
+                        Emit(I_LOADA,var->address);
+                    }
+                    else if (reading) {
+                        Emit(I_STOREA,var->address);
+                    }
+                    else {
+                        Emit(I_LOADA,var->address);
+                    }
+                    _Emit(I_PUSHFP);
+                }
+            }
+            else {
+                printf("name undeclared or not a variable\n");
+            }
+            Accept(IDENTIFIER);
             break;
     }
 }
@@ -771,7 +809,9 @@ PRIVATE void Accept(int ExpectedToken)
     }
     if (CurrentToken.code != ExpectedToken)  {
         SyntaxError(ExpectedToken, CurrentToken);
+        KillCodeGeneration();
         recovering = 1;
+        ErrorFlag = 1;
     }
     else  CurrentToken = GetToken();
 }
@@ -797,7 +837,6 @@ PRIVATE void SetupSets(void)
 PRIVATE void Synchronise(SET *F, SET *FB)
 {
     SET S;
-
     S = Union(2, F, FB);
     if (!InSet(F, CurrentToken.code)) {
         SyntaxError2(*F, CurrentToken);
@@ -832,7 +871,7 @@ PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype)
                 newsptr->scope = scope;
                 newsptr->type = symtype;
 
-                if (symtype == STYPE_VARIABLE || symtype == STYPE_LOCALVAR) {
+                if (symtype == STYPE_VARIABLE || symtype == STYPE_LOCALVAR || symtype == STYPE_REFPAR) {
                     newsptr->address = varaddress;
                     varaddress++;
                 }
@@ -840,12 +879,13 @@ PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype)
             }
         }
         else {
-            printf("Error: Variable already declared, stopping code generation...\n");
-            /*KillCodeGeneration();*/
+            printf("Error: Variable %s already declared, stopping code generation...\n", CurrentToken.s);
+            KillCodeGeneration();
         }
 
-    } else
-    printf("Current token is not an identifier\n");
+    }
+    else
+        printf("Current token is not an identifier: %i %s\n", CurrentToken.code, CurrentToken.s);
 
     return newsptr;
 }
@@ -853,7 +893,6 @@ PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype)
 PRIVATE SYMBOL *LookupSymbol(void)
 {
     SYMBOL *sptr;
-
     if (CurrentToken.code == IDENTIFIER) {
         sptr = Probe(CurrentToken.s, NULL);
         if (sptr == NULL) {
@@ -890,7 +929,6 @@ PRIVATE SYMBOL *LookupSymbol(void)
 
 PRIVATE int  OpenFiles(int argc, char *argv[])
 {
-
     if (argc != 4)  {
         fprintf(stderr, "%s <inputfile> <listfile> <codefile>\n", argv[0]);
         return 0;
@@ -910,6 +948,7 @@ PRIVATE int  OpenFiles(int argc, char *argv[])
     if (NULL == (CodeFile = fopen(argv[3], "w")))  {
         fprintf(stderr, "cannot open \"%s\" for output\n", argv[3]);
         fclose(InputFile);
+        fclose(ListFile);
         return 0;
     }
 

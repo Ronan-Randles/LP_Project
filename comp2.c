@@ -67,13 +67,13 @@ PRIVATE SET BlockFBS_aug;
 PRIVATE void ParseProgram(void);
 PRIVATE int ParseDeclarations(void);
 PRIVATE void ParseProcDeclaration(void);
-PRIVATE void ParseParameterList(void);
-PRIVATE void ParseFormalParameter(void);
+PRIVATE void ParseParameterList(SYMBOL *target); /*Passing target allows setting of pcount*/
+PRIVATE void ParseFormalParameter(SYMBOL *target);/*Passing target allows setting of ptypes*/
 PRIVATE void ParseBlock(void);
 PRIVATE void ParseStatement(void);
 PRIVATE void ParseSimpleStatement(void);
 PRIVATE void ParseRestOfStatement(SYMBOL *target);
-PRIVATE void ParseProcCallList(void);
+PRIVATE void ParseProcCallList(SYMBOL *target);/*Passing target allows checking pcount and ptypes of called function*/
 PRIVATE void ParseAssignment(void);
 PRIVATE void ParseActualParameter(void);
 PRIVATE void ParseWhileStatement(void);
@@ -88,6 +88,7 @@ PRIVATE int ParseBooleanExpression(void);
 PRIVATE void ParseAddOp(void);
 PRIVATE void ParseMultOp(void);
 PRIVATE int ParseRelOp(void);
+PRIVATE int GetPtype(int ptype, int index);
 
 
 /*--------------------------------------------------------------------------*/
@@ -206,7 +207,7 @@ PRIVATE void ParseProcDeclaration(void)
     procedure->address = CurrentCodeAddress();
     scope++;
     if (CurrentToken.code == LEFTPARENTHESIS) {
-        ParseParameterList();
+        ParseParameterList(procedure);
     }
     Accept(SEMICOLON);
     Synchronise(&ProcDeclarationFS_aug1, &ProcDeclarationFBS_aug);
@@ -239,15 +240,18 @@ PRIVATE void ParseProcDeclaration(void)
 /*                                                                          */
 /*--------------------------------------------------------------------------*/
 
-PRIVATE void ParseParameterList(void)
+PRIVATE void ParseParameterList(SYMBOL *target)
 {
     Accept(LEFTPARENTHESIS);
     if (CurrentToken.code != 0)
-    ParseFormalParameter();
+    target->pcount = 1;
+    target->ptypes = 0;
+    ParseFormalParameter(target);
 
     while (CurrentToken.code == COMMA) {
         Accept(COMMA);
-        ParseFormalParameter();
+        target->pcount++;
+        ParseFormalParameter(target);
     }
     Accept(RIGHTPARENTHESIS);
 }
@@ -260,16 +264,27 @@ PRIVATE void ParseParameterList(void)
 /*                                                                          */
 /*--------------------------------------------------------------------------*/
 
-PRIVATE void ParseFormalParameter(void)
+PRIVATE void ParseFormalParameter(SYMBOL *target)
 {
+    int shiftVal;
+
     if (CurrentToken.code == REF) {
         Accept(REF); /* Consume "REF" term */
         MakeSymbolTableEntry(STYPE_REFPAR); /* Set following symbol to type REFPAR */
+        shiftVal = (STYPE_REFPAR << (3 * (target->pcount - 1)));
         Accept(IDENTIFIER);
     }else {
         MakeSymbolTableEntry(STYPE_VARIABLE);
+        shiftVal = (STYPE_VARIABLE << (3 * (target->pcount - 1)));
         Accept(IDENTIFIER);
     }
+    /* Bitshift to store multiple pytpes in one 32 bit int */
+    /*Ensure that each value takes up space of 0x7 (3 binary digits)
+      for future extraction. This is suitable here since there are only 7 stypes
+      => n binary digits needed to differentiate between (2^n - 1) stypes
+      => 32 bit ptype field will support up to 10 parmas stored in ptypes int*/
+    target->ptypes = target->ptypes | shiftVal;
+
 }
 
 /*--------------------------------------------------------------------------*/
@@ -356,7 +371,7 @@ PRIVATE void ParseRestOfStatement(SYMBOL *target)
 {
     switch(CurrentToken.code) {
         case LEFTPARENTHESIS:
-            ParseProcCallList();/*should take target?*/
+            ParseProcCallList(target);
         case SEMICOLON:
             if (target != NULL && target->type == STYPE_PROCEDURE) {
                 _Emit(I_PUSHFP);
@@ -395,23 +410,52 @@ PRIVATE void ParseRestOfStatement(SYMBOL *target)
 /*                                                                          */
 /*--------------------------------------------------------------------------*/
 
-PRIVATE void ParseProcCallList(void)
+PRIVATE void ParseProcCallList(SYMBOL *target)
 {
+    int readParamCount = 0;
     Accept(LEFTPARENTHESIS);
     if(reading)
         _Emit(I_READ);
-    ParseActualParameter();
+
+    if (GetPtype(target->ptypes,readParamCount) == 7)
+        ParseActualParameter();
+    else if (GetPtype(target->ptypes,readParamCount) == 2)
+        ParseExpression();
+
+    readParamCount++;
     if(writing)
         _Emit(I_WRITE);
+
     while (CurrentToken.code == COMMA) {
         if(reading)
             _Emit(I_READ);
         Accept(COMMA);
         if(writing)
             _Emit(I_WRITE);
-    ParseActualParameter();
+
+        if (GetPtype(target->ptypes,readParamCount) == 7)
+            ParseActualParameter();
+        else if (GetPtype(target->ptypes,readParamCount) == 2)
+            ParseExpression();
+
+        readParamCount++;
     }
     Accept(RIGHTPARENTHESIS);
+}
+/**
+ * @brief Get the parameter type stored at given index of ptype field
+ *
+ * @param ptype ptype stored in procedure symbol
+ *
+ * @param index index of parameter type to be retrieved, starts at 0
+
+ * @return Type retrieved
+ */
+PRIVATE int GetPtype(int ptype, int index)
+{
+    /*Shift desired set of 3 digits to 3 LSB's, & with 7 (binary 111) to
+      take only 3 LSB's*/
+    return ((ptype >> (3 * index)) & 7);
 }
 
 /*--------------------------------------------------------------------------*/
@@ -438,7 +482,6 @@ PRIVATE void ParseAssignment(void)
 
 PRIVATE void ParseActualParameter(void)
 {
-    printf("CtS: %s\n", CurrentToken.s);
     if (CurrentToken.code == IDENTIFIER) {
         Accept(IDENTIFIER);
     }

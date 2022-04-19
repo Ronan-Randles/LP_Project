@@ -67,13 +67,17 @@ PRIVATE SET BlockFBS_aug;
 PRIVATE void ParseProgram(void);
 PRIVATE int ParseDeclarations(void);
 PRIVATE void ParseProcDeclaration(void);
-PRIVATE void ParseParameterList(SYMBOL *target); /*Passing target allows setting of pcount*/
-PRIVATE void ParseFormalParameter(SYMBOL *target);/*Passing target allows setting of ptypes*/
+PRIVATE void ParseParameterList(SYMBOL *target); /*Passing target allows setting
+                                                   of pcount*/
+PRIVATE void ParseFormalParameter(SYMBOL *target);/*Passing target allows
+                                                    setting of ptypes*/
 PRIVATE void ParseBlock(void);
 PRIVATE void ParseStatement(void);
 PRIVATE void ParseSimpleStatement(void);
 PRIVATE void ParseRestOfStatement(SYMBOL *target);
-PRIVATE void ParseProcCallList(SYMBOL *target);/*Passing target allows checking pcount and ptypes of called function*/
+PRIVATE void ParseProcCallList(SYMBOL *target);/*Passing target allows checking
+                                                 pcount and ptypes of called
+                                                 function*/
 PRIVATE void ParseAssignment(void);
 PRIVATE void ParseActualParameter(void);
 PRIVATE void ParseWhileStatement(void);
@@ -88,7 +92,10 @@ PRIVATE int ParseBooleanExpression(void);
 PRIVATE void ParseAddOp(void);
 PRIVATE void ParseMultOp(void);
 PRIVATE int ParseRelOp(void);
-PRIVATE int GetPtype(int ptype, int index);
+PRIVATE int GetPtype(int ptype, int index); /*Helper function to check procedure
+                                              ptypes*/
+PRIVATE int CheckSuffix(int argc, char *argv[]); /*Helper function to check file
+                                                   suffixes*/
 
 
 /*--------------------------------------------------------------------------*/
@@ -103,23 +110,25 @@ PUBLIC int main (int argc, char *argv[])
 {
     if (OpenFiles(argc, argv))  {
 
-        InitCharProcessor(InputFile, ListFile);
-        InitCodeGenerator(CodeFile);
+        InitCharProcessor(InputFile, ListFile);/*Initialise input processing*/
+        InitCodeGenerator(CodeFile); /*Initialise code generation*/
         CurrentToken = GetToken();
         SetupSets();
         ParseProgram();
-        WriteCodeFile();
+        WriteCodeFile(); /*Write to assembly file*/
         fclose(InputFile);
         fclose(ListFile);
         if (!ErrorFlag) {
             printf("Valid\n");
-            return EXIT_SUCCESS;
+            return EXIT_SUCCESS; /*print valid and exit success*/
         } else
-            return EXIT_FAILURE;
+            return EXIT_FAILURE; /*exit failure, no "invalid" print because
+                                   error prints will be present*/
 
     }
     else {
-        return EXIT_FAILURE;
+        return EXIT_FAILURE; /*impropper command line inputs, Openfiles
+                               -> CheckSuffix will give feedback to user*/
     }
 }
 
@@ -169,16 +178,15 @@ PRIVATE int ParseDeclarations(void)
 {
     int vcount = 0;
     Accept(VAR);
-    MakeSymbolTableEntry(STYPE_VARIABLE);
-    Accept(IDENTIFIER);
-    vcount++;
-
-    while (CurrentToken.code == COMMA) {
-        Accept(COMMA);
+    /* Do while used to reduce duplicate code*/
+    do {
+        if (CurrentToken.code == COMMA)
+            Accept(COMMA);
         MakeSymbolTableEntry(STYPE_VARIABLE);
         Accept(IDENTIFIER);
         vcount++;
-    }
+    } while (CurrentToken.code == COMMA);
+
     Accept(SEMICOLON);
     Emit(I_INC, vcount);
     return vcount;
@@ -226,7 +234,7 @@ PRIVATE void ParseProcDeclaration(void)
 
     _Emit(I_RET);
     BackPatch(backpatch_addr, CurrentCodeAddress());
-    DumpSymbols(0); /*Uncomment to dump symbols */
+    /*DumpSymbols(0);*/ /*Uncomment to dump symbols */
     RemoveSymbols(scope);
     scope--;
 }
@@ -270,7 +278,8 @@ PRIVATE void ParseFormalParameter(SYMBOL *target)
 
     if (CurrentToken.code == REF) {
         Accept(REF); /* Consume "REF" term */
-        MakeSymbolTableEntry(STYPE_REFPAR); /* Set following symbol to type REFPAR */
+        MakeSymbolTableEntry(STYPE_REFPAR); /* Set following symbol to type
+                                               REFPAR */
         shiftVal = (STYPE_REFPAR << (3 * (target->pcount - 1)));
         Accept(IDENTIFIER);
     }else {
@@ -355,7 +364,8 @@ PRIVATE void ParseSimpleStatement(void)
     SYMBOL *target;
     target = LookupSymbol();
     Accept(IDENTIFIER);
-    ParseRestOfStatement(target);
+    if (target)
+        ParseRestOfStatement(target);
 }
 
 
@@ -414,32 +424,30 @@ PRIVATE void ParseProcCallList(SYMBOL *target)
 {
     int readParamCount = 0;
     Accept(LEFTPARENTHESIS);
-    if(reading)
-        _Emit(I_READ);
+    /* Do while used to reduce duplicate code*/
+    do {
+        if (CurrentToken.code == COMMA)
+            Accept(COMMA);
 
-    if (GetPtype(target->ptypes,readParamCount) == 7)
-        ParseActualParameter();
-    else if (GetPtype(target->ptypes,readParamCount) == 2)
-        ParseExpression();
-
-    readParamCount++;
-    if(writing)
-        _Emit(I_WRITE);
-
-    while (CurrentToken.code == COMMA) {
         if(reading)
             _Emit(I_READ);
-        Accept(COMMA);
-        if(writing)
-            _Emit(I_WRITE);
 
-        if (GetPtype(target->ptypes,readParamCount) == 7)
+        if (GetPtype(target->ptypes,readParamCount) == 7){
+            if (CurrentToken.code != IDENTIFIER) {
+                printf("Expected identifier, killing code generation...\n");
+                KillCodeGeneration();
+                ErrorFlag = 1;
+            }
             ParseActualParameter();
+        }
         else if (GetPtype(target->ptypes,readParamCount) == 2)
             ParseExpression();
 
         readParamCount++;
-    }
+        if(writing)
+            _Emit(I_WRITE);
+
+    }while(CurrentToken.code == COMMA);
     Accept(RIGHTPARENTHESIS);
 }
 /**
@@ -678,6 +686,7 @@ PRIVATE void ParseSubTerm(void)
         default:
             var = LookupSymbol();
 
+
             if (var != NULL){
                 if (var->type == STYPE_VARIABLE) {
                     if (writing) {
@@ -845,7 +854,8 @@ PRIVATE void Accept(int ExpectedToken)
 {
     static int recovering = 0;
     if (recovering) {
-        while (CurrentToken.code != ExpectedToken && CurrentToken.code != ENDOFINPUT){
+        while (CurrentToken.code != ExpectedToken
+            && CurrentToken.code != ENDOFINPUT){
             CurrentToken = GetToken();
         }
         recovering = 0;
@@ -897,7 +907,8 @@ PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype)
     int hashindex;
     static int varaddress = 0;
     if (CurrentToken.code == IDENTIFIER) {
-        if (NULL == (oldsptr = Probe(CurrentToken.s, &hashindex)) || oldsptr->scope < scope) {
+        if (NULL == (oldsptr = Probe(CurrentToken.s, &hashindex))
+                || oldsptr->scope < scope) {
             if (oldsptr == NULL)
                 cptr = CurrentToken.s;
             else
@@ -914,7 +925,8 @@ PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype)
                 newsptr->scope = scope;
                 newsptr->type = symtype;
 
-                if (symtype == STYPE_VARIABLE || symtype == STYPE_LOCALVAR || symtype == STYPE_REFPAR) {
+                if (symtype == STYPE_VARIABLE || symtype == STYPE_LOCALVAR
+                    || symtype == STYPE_REFPAR) {
                     newsptr->address = varaddress;
                     varaddress++;
                 }
@@ -922,13 +934,15 @@ PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype)
             }
         }
         else {
-            printf("Error: Variable %s already declared, stopping code generation...\n", CurrentToken.s);
+            printf("Error: Variable %s already declared,"
+                    "stopping code generation...\n", CurrentToken.s);
             KillCodeGeneration();
         }
 
     }
     else
-        printf("Current token is not an identifier: %i %s\n", CurrentToken.code, CurrentToken.s);
+        printf("Current token is not an identifier: %i %s\n",
+                CurrentToken.code, CurrentToken.s);
 
     return newsptr;
 }
@@ -977,6 +991,9 @@ PRIVATE int  OpenFiles(int argc, char *argv[])
         return 0;
     }
 
+    if(!CheckSuffix(argc, argv))
+        return 0;
+
     if (NULL == (InputFile = fopen(argv[1], "r")))  {
         fprintf(stderr, "cannot open \"%s\" for input\n", argv[1]);
         return 0;
@@ -995,6 +1012,26 @@ PRIVATE int  OpenFiles(int argc, char *argv[])
         return 0;
     }
 
-
     return 1;
+}
+
+PRIVATE int CheckSuffix(int argc, char *argv[])
+{
+    char *suffix = strrchr(argv[1],'.');
+    if (!(suffix && ((!strcmp(suffix, ".prog")||(!strcmp(suffix, ".errs")))))) {
+        printf("Input file should end in .prog or .errs\n");
+        return 0;
+    }
+    suffix = strrchr(argv[2],'.');
+    if (!(suffix && (!strcmp(suffix, ".list")))) {
+        printf("Input file should end in .list\n");
+        return 0;
+    }
+    suffix = strrchr(argv[3],'.');
+    if (!(suffix && (!strcmp(suffix, ".asm")))) {
+        printf("Input file should end in .asm\n");
+        return 0;
+    }
+    return 1;
+
 }

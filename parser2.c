@@ -32,6 +32,7 @@ PRIVATE FILE *ListFile;            /*  For nicely-formatted syntax errors.  */
 PRIVATE TOKEN  CurrentToken;       /*  Parser lookahead token.  Updated by  */
                                    /*  routine Accept (below).  Must be     */
                                    /*  initialised before parser starts.    */
+PRIVATE int ErrorFlag = 0;
 
 
 /*--------------------------------------------------------------------------*/
@@ -98,8 +99,12 @@ PUBLIC int main ( int argc, char *argv[] )
         ParseProgram();
         fclose( InputFile );
         fclose( ListFile );
-        printf("Parse Complete\n");
-        return  EXIT_SUCCESS;
+        if (!ErrorFlag) {
+            printf("Valid\n");
+            return EXIT_SUCCESS; /*print valid and exit success*/
+        } else
+            return EXIT_FAILURE; /*exit failure, no "invalid" print because
+                                   error prints will be present*/
     }
     else {
         return EXIT_FAILURE;
@@ -646,15 +651,16 @@ PRIVATE void Accept( int ExpectedToken )
 {
     static int recovering = 0;
     if (recovering) {
-        while(CurrentToken.code != ExpectedToken && CurrentToken.code != ENDOFINPUT){
+        while(CurrentToken.code != ExpectedToken && CurrentToken.code !=
+              ENDOFINPUT)
             CurrentToken = GetToken();
-            printf("CurrentTokenCode: %i\n", CurrentToken.code);
-        }
+
         recovering = 0;
     }
     if ( CurrentToken.code != ExpectedToken )  {
         SyntaxError( ExpectedToken, CurrentToken );
         recovering = 1;
+        ErrorFlag = 1;
     }
     else  CurrentToken = GetToken();
 }

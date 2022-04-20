@@ -106,10 +106,6 @@ PRIVATE void ParseBooleanExpression(void);
 PRIVATE void ParseAddOp(void);
 PRIVATE void ParseMultOp(void);
 PRIVATE void ParseRelOp(void);
-PRIVATE void ParseVariable(void);
-PRIVATE void ParseIntConst(void);
-PRIVATE void ParseIdentifier(void);
-
 
 /*--------------------------------------------------------------------------*/
 /*                                                                          */
@@ -134,7 +130,6 @@ PUBLIC int main ( int argc, char *argv[] )
         return EXIT_FAILURE;
     }
 }
-
 
 /*--------------------------------------------------------------------------*/
 /*                                                                          */

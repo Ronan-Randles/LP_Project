@@ -1,15 +1,12 @@
 /*--------------------------------------------------------------------------*/
 /*                                                                          */
-/*       parser2                                                            */
+/*       comp1                                                              */
 /*                                                                          */
 /*                                                                          */
 /*       Group Members:          ID numbers                                 */
 /*                                                                          */
 /*       Ronan Randles            19242441                                  */
 /*                                                                          */
-/*--------------------------------------------------------------------------*/
-/*      parser2 builds on parse1 with the addition of augmented s-algol     */
-/*      error recovery                                                    */
 /*--------------------------------------------------------------------------*/
 
 #include <stdio.h>
@@ -37,6 +34,7 @@ PRIVATE FILE *CodeFile;
 PRIVATE TOKEN  CurrentToken;       /*  Parser lookahead token.  Updated by  */
                                    /*  routine Accept (below).  Must be     */
                                    /*  initialised before parser starts.    */
+PRIVATE int ErrorFlag = 0;
 static int scope = 1;
 
 /*--------------------------------------------------------------------------*/
@@ -89,7 +87,7 @@ PRIVATE int ParseRelOp(void);
 
 /*--------------------------------------------------------------------------*/
 /*                                                                          */
-/*  Main: parser entry point.  Sets up parser globals (opens input and */
+/*  Main: parser entry point.  Sets up parser globals (opens input and      */
 /*        output files, initialises current lookahead), then calls          */
 /*        "ParseProgram" to start the parse.                                */
 /*                                                                          */
@@ -107,7 +105,12 @@ PUBLIC int main (int argc, char *argv[])
         WriteCodeFile();
         fclose(InputFile);
         fclose(ListFile);
-        return  EXIT_SUCCESS;
+        if (!ErrorFlag) {
+            printf("Valid\n");
+            return EXIT_SUCCESS; /*print valid and exit success*/
+        } else
+            return EXIT_FAILURE; /*exit failure, no "invalid" print because
+                                   error prints will be present*/
     }
     else {
         return EXIT_FAILURE;
@@ -332,13 +335,14 @@ PRIVATE void ParseRestOfStatement(SYMBOL *target)
 {
     switch(CurrentToken.code) {
         case LEFTPARENTHESIS:
-            ParseProcCallList();/*should take target?*/
+            ParseProcCallList();
         case SEMICOLON:
             if (target != NULL && target->type == STYPE_PROCEDURE)
                 Emit(I_CALL, target->address);
             else {
                 printf("Not a procedure\n");
                 KillCodeGeneration();
+                ErrorFlag = 1;
             }
             break;
         case ASSIGNMENT:
@@ -348,9 +352,9 @@ PRIVATE void ParseRestOfStatement(SYMBOL *target)
             else {
                 printf("Undeclared variable\n");
                 KillCodeGeneration();
+                ErrorFlag = 1;
             }
             break;
-        /***Handle epsilon here?*/
         default:
             break;
     }
@@ -736,6 +740,7 @@ PRIVATE void Accept(int ExpectedToken)
     if (CurrentToken.code != ExpectedToken)  {
         SyntaxError(ExpectedToken, CurrentToken);
         recovering = 1;
+        ErrorFlag = 1;
     }
     else  CurrentToken = GetToken();
 }
@@ -805,7 +810,8 @@ PRIVATE void MakeSymbolTableEntry(int symtype)
         }
         else {
             printf("Error: Variable already declared, stopping code generation...\n");
-            /*KillCodeGeneration();*/
+            KillCodeGeneration();
+            ErrorFlag = 1;
         }
 
     } else
@@ -821,6 +827,7 @@ PRIVATE SYMBOL *LookupSymbol(void)
         if (sptr == NULL) {
             Error("Identifier not declared", CurrentToken.pos);
             KillCodeGeneration();
+            ErrorFlag = 1;
         }
     }
     else sptr = NULL;

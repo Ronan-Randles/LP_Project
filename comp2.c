@@ -1,15 +1,12 @@
 /*--------------------------------------------------------------------------*/
 /*                                                                          */
-/*       parser2                                                            */
+/*       comp2                                                            */
 /*                                                                          */
 /*                                                                          */
 /*       Group Members:          ID numbers                                 */
 /*                                                                          */
 /*       Ronan Randles            19242441                                  */
 /*                                                                          */
-/*--------------------------------------------------------------------------*/
-/*      parser2 builds on parse1 with the addition of augmented s-algol     */
-/*      error recovery                                                    */
 /*--------------------------------------------------------------------------*/
 
 #include <stdio.h>
@@ -157,10 +154,9 @@ PRIVATE void ParseProgram(void)
     if (CurrentToken.code == VAR)
         ParseDeclarations();
     Synchronise(&ProgramFS_aug2, &ProgramFBS_aug);
-    while (CurrentToken.code == PROCEDURE) {
+    while (CurrentToken.code == PROCEDURE)
         ParseProcDeclaration();
-        Synchronise(&ProgramFS_aug2, &ProgramFBS_aug);
-    }
+    Synchronise(&ProgramFS_aug2, &ProgramFBS_aug);
 
     ParseBlock();
     Accept(ENDOFPROGRAM);
@@ -214,14 +210,14 @@ PRIVATE void ParseProcDeclaration(void)
     Emit(I_BR,0);
     procedure->address = CurrentCodeAddress();
     scope++;
-    if (CurrentToken.code == LEFTPARENTHESIS) {
+    if (CurrentToken.code == LEFTPARENTHESIS)
         ParseParameterList(procedure);
-    }
+
     Accept(SEMICOLON);
     Synchronise(&ProcDeclarationFS_aug1, &ProcDeclarationFBS_aug);
-    if (CurrentToken.code == VAR) {
+    if (CurrentToken.code == VAR)
         vcount = ParseDeclarations();
-    }
+
     Synchronise(&ProcDeclarationFS_aug2, &ProcDeclarationFBS_aug);
     while (CurrentToken.code == PROCEDURE) {
         ParseProcDeclaration();
@@ -392,6 +388,7 @@ PRIVATE void ParseRestOfStatement(SYMBOL *target)
             else {
                 printf("Not a procedure\n");
                 KillCodeGeneration();
+                ErrorFlag = 1;
             }
             break;
         case ASSIGNMENT:
@@ -404,6 +401,7 @@ PRIVATE void ParseRestOfStatement(SYMBOL *target)
             else {
                 printf("Undeclared variable: %s\n", target->s);
                 KillCodeGeneration();
+                ErrorFlag = 1;
             }
             break;
 
@@ -937,6 +935,7 @@ PRIVATE SYMBOL *MakeSymbolTableEntry(int symtype)
             printf("Error: Variable %s already declared,"
                     "stopping code generation...\n", CurrentToken.s);
             KillCodeGeneration();
+            ErrorFlag = 1;
         }
 
     }
@@ -955,6 +954,7 @@ PRIVATE SYMBOL *LookupSymbol(void)
         if (sptr == NULL) {
             Error("Identifier not declared", CurrentToken.pos);
             KillCodeGeneration();
+            ErrorFlag = 1;
         }
     }
     else sptr = NULL;
@@ -1014,7 +1014,14 @@ PRIVATE int  OpenFiles(int argc, char *argv[])
 
     return 1;
 }
-
+/**
+ * @brief Check that input files have expected suffix's
+ *
+ * @param argc number of command line arguments
+ * @param argv command line arguments
+ * @return 1 if arguments have valid suffix's
+ * @return 0 if arguments have invalid suffix's
+ */
 PRIVATE int CheckSuffix(int argc, char *argv[])
 {
     char *suffix = strrchr(argv[1],'.');
@@ -1024,12 +1031,12 @@ PRIVATE int CheckSuffix(int argc, char *argv[])
     }
     suffix = strrchr(argv[2],'.');
     if (!(suffix && (!strcmp(suffix, ".list")))) {
-        printf("Input file should end in .list\n");
+        printf("List file should end in .list\n");
         return 0;
     }
     suffix = strrchr(argv[3],'.');
     if (!(suffix && (!strcmp(suffix, ".asm")))) {
-        printf("Input file should end in .asm\n");
+        printf("Assembly output file should end in .asm\n");
         return 0;
     }
     return 1;
